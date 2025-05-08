@@ -18,14 +18,25 @@
 #include "opensans12b.h"
 #include "opensans18b.h"
 #include "opensans24b.h"
+
 // === UI Positions ===
 int cursor_x = 0;
 int cursor_y = 0;
 int custom_y = 80;
-const char* websocket_server = "api.xxxxx";
-const uint16_t websocket_port = 444;
+
+const char* websocket_server = "apixxxxxp";
+const uint16_t websocket_port = 445;
 const char* websocket_path = "/";
 
+String stationIds[5] = {
+  "630b8482358c9bfb807707d4",
+  "6703dfd421734c70c376eb70",
+  "6707e6ec29d1c6147be4652a",
+  "6703f5df6d412eaa7f7abad3",
+  "6703f5df6d412eaa7f7abad3"
+};
+
+int currentStationIndex = 0;
 WebSocketsClient webSocket;
 
 bool isCon = false;
@@ -34,8 +45,13 @@ bool isConSer = false;
 #error "Please enable PSRAM, Arduino IDE -> Tools -> PSRAM -> OPI !!!"
 #endif
 String localMac;
-// === DISPLAY ===
+
 uint8_t *framebuffer;
+
+#define BUTTON_PIN 21  // GPIO0 is commonly available on ESP32 dev boards
+
+unsigned long lastButtonPress = 0;
+
 // === GET CARDINAL DIRECTION ===
 String getCardinalDirection(int windDir) {
   if (windDir >= 0 && windDir < 22.5) return "N";
@@ -63,6 +79,12 @@ float density;
 int direction;
 int secPassed = 0;
 
+void subscribeToStation() {
+  String subscribeMsg = "{\"action\":\"subscribe\",\"channel\":{\"name\":\"station\",\"params\":{\"light\":true,\"where\":{\"_id\":\"" + stationIds[currentStationIndex] + "\"}}}}";
+  webSocket.sendTXT(subscribeMsg);
+  Serial.println("Subscribed to: " + stationIds[currentStationIndex]);
+}
+
 void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
   switch (type) {
     case WStype_DISCONNECTED:
@@ -73,12 +95,10 @@ void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
       Serial.println("Connected to WebSocket server");
       delay(40);
       isConSer = true;
-      webSocket.sendTXT("{\"action\":\"subscribe\",\"channel\":{\"name\":\"station\",\"params\":{\"light\": true, \"where\":{\"_id\":\"630b8482358c9bfb807707d4\"}}}}");
+      subscribeToStation();
       break;
 
     case WStype_TEXT: {
-        Serial.printf("Message from server: %s\n", payload);
-
         StaticJsonDocument<1024> doc;
         DeserializationError error = deserializeJson(doc, payload);
 
@@ -129,7 +149,6 @@ void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
             Serial.println("--------------------------");
           
             refreshData();
-          
           } else {
             Serial.println(F("lastWindData not found"));
           }
@@ -157,32 +176,32 @@ void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
   }
 }
 
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
   epd_init();
   framebuffer = (uint8_t *)ps_calloc(sizeof(uint8_t), EPD_WIDTH * EPD_HEIGHT / 2);
   if (!framebuffer) {
     Serial.println("❌ Framebuffer allocation failed!");
-    while (true)
-      ;
+    while (true);
   }
-  memset(framebuffer, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2);  // clear
-
+  memset(framebuffer, 0xFF, EPD_WIDTH * EPD_HEIGHT / 2);
   epd_poweron();
   epd_clear();
   drawLayout();
   delay(1000);
+
   WiFiManager wifiManager;
   wifiManager.setConfigPortalTimeout(300);
-
   Serial.println("Connecting to Wi-Fi...");
   if (!wifiManager.autoConnect("KWind IoT", "")) {
     Serial.println("Failed to connect. Restarting...");
     delay(3000);
     ESP.restart();
   }
-
   Serial.println("Wi-Fi connected.");
   isCon = true;
 
@@ -190,12 +209,18 @@ void setup() {
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000);
 }
-
 void loop() {
-  webSocket.loop();  // Needed to maintain connection
-  delay(1);          // Prevent watchdog reset
-}
+  webSocket.loop();
 
+  // Check button press to cycle station
+  if (digitalRead(BUTTON_PIN) == LOW && millis() - lastButtonPress > 1000) {
+    lastButtonPress = millis();
+    currentStationIndex = (currentStationIndex + 1) % 5;
+    subscribeToStation();
+  }
+
+  delay(1);  // Prevent watchdog reset
+}
 
 void drawLayout() {
   // Initial display text, labels, and empty areas
@@ -355,7 +380,7 @@ Rect_t areap7 = {
 void refreshData() {
   
   // Area 1: Update Wind Speed
-  Rect_t area1 = { 430, 20 + custom_y, .width = 220, .height = 50 };
+  Rect_t area1 = { 420, 20 + custom_y, .width = 220, .height = 50 };
   epd_clear_area(area1);  // Clear previous data in the Wind Speed area
   char windSpeed[16];
   snprintf(windSpeed, sizeof(windSpeed), "%.1f  KNT", windspeed);
@@ -365,7 +390,7 @@ void refreshData() {
 
 
   // Area 2: Update Gust Speed
-  Rect_t area2 = { 430, 80 + custom_y, .width = 220, .height = 50 };
+  Rect_t area2 = { 420, 80 + custom_y, .width = 220, .height = 50 };
   epd_clear_area(area2);  // Clear previous data in the Gust Speed area
   char windGust[16];
   snprintf( windGust, sizeof(windGust), "%.1f  KNT", windspeedMax);
@@ -374,7 +399,7 @@ void refreshData() {
   writeln((GFXfont *)&OpenSans24B,  windGust, &cursor_x, &cursor_y, NULL);
 
  // Area 3: Update Wind Direction
- Rect_t area3 = { 430, 140 + custom_y, .width = 260, .height = 50 };
+ Rect_t area3 = { 420, 140 + custom_y, .width = 260, .height = 50 };
  epd_clear_area(area3);  // Clear previous data in the Wind Direction area
  char windDirection[16];
  snprintf(windDirection, sizeof(windDirection), "%d° (%s)", direction, getCardinalDirection(direction).c_str());
@@ -384,7 +409,7 @@ void refreshData() {
 
   
   //Area 4: Update Temperature
-  Rect_t area4 = { 430, 200 + custom_y, .width = 220, .height = 50 };
+  Rect_t area4 = { 420, 200 + custom_y, .width = 220, .height = 50 };
   epd_clear_area(area4);  // Clear previous data in the Temperature area
   char temperatureC[16];
   snprintf(temperatureC, sizeof(temperatureC), "%.1f   °C", temperature);
@@ -393,7 +418,7 @@ void refreshData() {
   writeln((GFXfont *)&OpenSans24B, temperatureC, &cursor_x, &cursor_y, NULL);
  //Area 4: Update Temperature
 
- Rect_t area8 = { 430, 250 + custom_y, .width = 220, .height = 50 };
+ Rect_t area8 = { 420, 250 + custom_y, .width = 220, .height = 50 };
  epd_clear_area(area8);  // Clear previous data in the Temperature area
  char humidityC[16];
  snprintf(humidityC, sizeof(humidityC), "%.1f    %%", humidity);
@@ -431,7 +456,7 @@ cursor_y = 420 + custom_y;
 writeln((GFXfont *)&OpenSans18B, sunsetStr, &cursor_x, &cursor_y, NULL);
 
 // Area 9: Station Name
-Rect_t area9 = { 170, 0, .width = 400, .height = 40 };  // Adjust position as needed
+Rect_t area9 = { 230, 0, .width = 700, .height = 60 };  // Adjust position as needed
 epd_clear_area(area9);
 char stationName[64];
 snprintf(stationName, sizeof(stationName), "%s", name);
