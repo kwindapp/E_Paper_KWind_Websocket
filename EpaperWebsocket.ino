@@ -22,8 +22,8 @@
 int cursor_x = 0;
 int cursor_y = 0;
 int custom_y = 80;
-const char* websocket_server = "api.kwind.app";
-const uint16_t websocket_port = 443;
+const char* websocket_server = "api.xxxxx";
+const uint16_t websocket_port = 444;
 const char* websocket_path = "/";
 
 WebSocketsClient webSocket;
